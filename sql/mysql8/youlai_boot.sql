@@ -1,18 +1,18 @@
 
-# YouLai_Boot 数据库(MySQL 8.x)
+# verify_pro 数据库(MySQL 8.x)
 # Copyright (c) 2021-present, youlai.tech
 
 
 -- ----------------------------
 -- 1. 创建数据库
 -- ----------------------------
-CREATE DATABASE IF NOT EXISTS youlai_boot DEFAULT CHARACTER SET utf8mb4 DEFAULT COLLATE utf8mb4_general_ci;
+CREATE DATABASE IF NOT EXISTS verify_pro DEFAULT CHARACTER SET utf8mb4 DEFAULT COLLATE utf8mb4_general_ci;
 
 
 -- ----------------------------
 -- 2. 创建表 && 数据初始化
 -- ----------------------------
-use youlai_boot;
+use verify_pro;
 
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
