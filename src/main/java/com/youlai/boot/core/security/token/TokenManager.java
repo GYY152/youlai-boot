@@ -1,13 +1,15 @@
-package com.youlai.boot.core.security.manager;
+package com.youlai.boot.core.security.token;
 
 
 import com.youlai.boot.core.security.model.AuthenticationToken;
 import org.springframework.security.core.Authentication;
 
 /**
- * 令牌接口
+ *  Token 管理器
+ *  <p>
+ *  用于生成、解析、校验、刷新 Token
  *
- * @author Ray
+ * @author Ray.Hao
  * @since 2.16.0
  */
 public interface TokenManager {
@@ -23,7 +25,7 @@ public interface TokenManager {
     /**
      * 解析 Token 获取认证信息
      *
-     * @param token JWT Token
+     * @param token  Token
      * @return 用户认证信息
      */
     Authentication parseToken(String token);
@@ -55,7 +57,6 @@ public interface TokenManager {
         // 默认实现可以是空的，或者抛出不支持的操作异常
         // throw new UnsupportedOperationException("Not implemented");
     }
-
 
 
 }

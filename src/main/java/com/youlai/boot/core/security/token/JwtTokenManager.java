@@ -1,4 +1,4 @@
-package com.youlai.boot.core.security.manager;
+package com.youlai.boot.core.security.token;
 
 import cn.hutool.core.convert.Convert;
 import cn.hutool.core.date.DateUtil;
@@ -8,6 +8,7 @@ import cn.hutool.jwt.JWT;
 import cn.hutool.jwt.JWTPayload;
 import cn.hutool.jwt.JWTUtil;
 import com.youlai.boot.common.constant.JwtClaimConstants;
+import com.youlai.boot.common.constant.RedisConstants;
 import com.youlai.boot.common.constant.SecurityConstants;
 import com.youlai.boot.common.exception.BusinessException;
 import com.youlai.boot.common.result.ResultCode;
@@ -30,7 +31,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
- * JWT 令牌服务实现
+ * JWT Token 管理器
+ * <p>
+ * 用于生成、解析、校验、刷新 JWT Token
  *
  * @author Ray.Hao
  * @since 2024/11/15
@@ -43,11 +46,10 @@ public class JwtTokenManager implements TokenManager {
     private final RedisTemplate<String, Object> redisTemplate;
     private final byte[] secretKey;
 
-
     public JwtTokenManager(SecurityProperties securityProperties, RedisTemplate<String, Object> redisTemplate) {
         this.securityProperties = securityProperties;
         this.redisTemplate = redisTemplate;
-        this.secretKey = securityProperties.getJwt().getKey().getBytes();
+        this.secretKey = securityProperties.getSession().getJwt().getSecretKey().getBytes();
     }
 
     /**
@@ -58,8 +60,8 @@ public class JwtTokenManager implements TokenManager {
      */
     @Override
     public AuthenticationToken generateToken(Authentication authentication) {
-        int accessTokenTimeToLive = securityProperties.getJwt().getAccessTokenTimeToLive();
-        int refreshTokenTimeToLive = securityProperties.getJwt().getRefreshTokenTimeToLive();
+        int accessTokenTimeToLive = securityProperties.getSession().getAccessTokenTimeToLive();
+        int refreshTokenTimeToLive = securityProperties.getSession().getRefreshTokenTimeToLive();
 
         String accessToken = generateToken(authentication, accessTokenTimeToLive);
         String refreshToken = generateToken(authentication, refreshTokenTimeToLive);
@@ -116,7 +118,7 @@ public class JwtTokenManager implements TokenManager {
             String jti = payloads.getStr(JWTPayload.JWT_ID);
 
             // 判断是否在黑名单中，如果在，则返回false 标识Token无效
-            if (Boolean.TRUE.equals(redisTemplate.hasKey(SecurityConstants.BLACKLIST_TOKEN_PREFIX + jti))) {
+            if (Boolean.TRUE.equals(redisTemplate.hasKey(RedisConstants.Auth.BLACKLIST_TOKEN + jti))) {
                 return false;
             }
         }
@@ -130,13 +132,17 @@ public class JwtTokenManager implements TokenManager {
      */
     @Override
     public void blacklistToken(String token) {
-        if (token.startsWith(SecurityConstants.JWT_TOKEN_PREFIX)) {
-            token = token.substring(SecurityConstants.JWT_TOKEN_PREFIX.length());
+        if (token.startsWith(SecurityConstants.BEARER_TOKEN_PREFIX)) {
+            token = token.substring(SecurityConstants.BEARER_TOKEN_PREFIX.length());
         }
+
         JWT jwt = JWTUtil.parseToken(token);
         JSONObject payloads = jwt.getPayloads();
-        String jti = payloads.getStr(JWTPayload.JWT_ID);
+
         Integer expirationAt = payloads.getInt(JWTPayload.EXPIRES_AT);
+
+        // 黑名单Token Key
+        String blacklistTokenKey = RedisConstants.Auth.BLACKLIST_TOKEN + payloads.getStr(JWTPayload.JWT_ID);
 
         if (expirationAt != null) {
             int currentTimeSeconds = Convert.toInt(System.currentTimeMillis() / 1000);
@@ -146,14 +152,13 @@ public class JwtTokenManager implements TokenManager {
             }
             // 计算Token剩余时间，将其加入黑名单
             int expirationIn = expirationAt - currentTimeSeconds;
-            redisTemplate.opsForValue().set(SecurityConstants.BLACKLIST_TOKEN_PREFIX + jti, null, expirationIn, TimeUnit.SECONDS);
+            redisTemplate.opsForValue().set(blacklistTokenKey, null, expirationIn, TimeUnit.SECONDS);
         } else {
             // 永不过期的Token永久加入黑名单
-            redisTemplate.opsForValue().set(SecurityConstants.BLACKLIST_TOKEN_PREFIX + jti, null);
+            redisTemplate.opsForValue().set(blacklistTokenKey, null);
         }
         ;
     }
-
 
     /**
      * 刷新令牌
@@ -161,7 +166,6 @@ public class JwtTokenManager implements TokenManager {
      * @param refreshToken 刷新令牌
      * @return 令牌响应对象
      */
-
     @Override
     public AuthenticationToken refreshToken(String refreshToken) {
 
@@ -171,7 +175,7 @@ public class JwtTokenManager implements TokenManager {
         }
 
         Authentication authentication = parseToken(refreshToken);
-        int accessTokenExpiration = securityProperties.getJwt().getRefreshTokenTimeToLive();
+        int accessTokenExpiration = securityProperties.getSession().getRefreshTokenTimeToLive();
         String newAccessToken = generateToken(authentication, accessTokenExpiration);
 
         return AuthenticationToken.builder()
@@ -182,13 +186,12 @@ public class JwtTokenManager implements TokenManager {
                 .build();
     }
 
-
     /**
      * 生成 JWT Token
      *
      * @param authentication 认证信息
      * @param ttl           过期时间
-     * @return
+     * @return JWT Token
      */
     private String generateToken(Authentication authentication, int ttl) {
 
