@@ -12,7 +12,7 @@ import com.youlai.boot.common.constant.RedisConstants;
 import com.youlai.boot.common.constant.SystemConstants;
 import com.youlai.boot.common.exception.BusinessException;
 import com.youlai.boot.common.model.Option;
-import com.youlai.boot.core.security.manager.TokenManager;
+import com.youlai.boot.core.security.token.TokenManager;
 import com.youlai.boot.core.security.service.PermissionService;
 import com.youlai.boot.core.security.util.SecurityUtils;
 import com.youlai.boot.shared.mail.service.MailService;
@@ -86,6 +86,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         int pageNum = queryParams.getPageNum();
         int pageSize = queryParams.getPageSize();
         Page<UserBO> page = new Page<>(pageNum, pageSize);
+
+        boolean isRoot = SecurityUtils.isRoot();
+        queryParams.setIsRoot(isRoot);
+
         // 查询数据
         Page<UserBO> userPage = this.baseMapper.getUserPage(page, queryParams);
 
@@ -276,15 +280,35 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
      */
     @Override
     public List<UserExportDTO> listExportUsers(UserPageQuery queryParams) {
-        List<UserExportDTO> userExportDTOS = this.baseMapper.listExportUsers(queryParams);
-        //获取角色的字典数据
-        List<DictData> list = dictDataService.list(new LambdaQueryWrapper<DictData>().eq(DictData::getDictCode, DictCodeEnum.GENDER.getValue()));
-        Map<String, String> genderMap = list.stream().collect(Collectors.toMap(DictData::getValue, DictData::getLabel));
-        userExportDTOS.forEach(userExportDTO -> {
-            String genderLabel = genderMap.get(userExportDTO.getGender());
-            userExportDTO.setGender(genderLabel);
-        });
-        return null;
+
+        boolean isRoot = SecurityUtils.isRoot();
+        queryParams.setIsRoot(isRoot);
+
+        List<UserExportDTO> exportUsers = this.baseMapper.listExportUsers(queryParams);
+        if (CollectionUtil.isNotEmpty(exportUsers)) {
+            //获取角色的字典数据
+            Map<String, String> genderMap = dictDataService.list(
+                            new LambdaQueryWrapper<DictData>().eq(DictData::getDictCode,
+                                    DictCodeEnum.GENDER.getValue())
+                    ).stream()
+                    .collect(Collectors.toMap(DictData::getValue, DictData::getLabel)
+                    );
+
+            exportUsers.forEach(item -> {
+                String gender = item.getGender();
+                if (StrUtil.isBlank(gender)) {
+                    return;
+                }
+
+                // 判断map是否为空
+                if (genderMap.isEmpty()) {
+                    return;
+                }
+
+                item.setGender(genderMap.get(gender));
+            });
+        }
+        return exportUsers;
     }
 
     /**
@@ -422,7 +446,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         boolean result = smsService.sendSms(mobile, SmsTypeEnum.CHANGE_MOBILE, templateParams);
         if (result) {
             // 缓存验证码，5分钟有效，用于更换手机号校验
-            String redisCacheKey = RedisConstants.SMS_CHANGE_CODE_PREFIX + mobile;
+            String redisCacheKey = StrUtil.format(RedisConstants.Captcha.MOBILE_CODE, mobile);
             redisTemplate.opsForValue().set(redisCacheKey, code, 5, TimeUnit.MINUTES);
         }
         return result;
@@ -448,8 +472,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         String inputVerifyCode = form.getCode();
         String mobile = form.getMobile();
 
-        String redisCacheKey = RedisConstants.SMS_CHANGE_CODE_PREFIX + mobile;
-        String cachedVerifyCode = redisTemplate.opsForValue().get(redisCacheKey);
+        String cacheKey = StrUtil.format(RedisConstants.Captcha.MOBILE_CODE, mobile);
+
+        String cachedVerifyCode = redisTemplate.opsForValue().get(cacheKey);
 
         if (StrUtil.isBlank(cachedVerifyCode)) {
             throw new BusinessException("验证码已过期");
@@ -458,7 +483,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             throw new BusinessException("验证码错误");
         }
         // 验证完成删除验证码
-        redisTemplate.delete(redisCacheKey);
+        redisTemplate.delete(cacheKey);
 
         // 更新手机号码
         return this.update(
@@ -482,7 +507,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
         mailService.sendMail(email, "邮箱验证码", "您的验证码为：" + code + "，请在5分钟内使用");
         // 缓存验证码，5分钟有效，用于更换邮箱校验
-        String redisCacheKey = RedisConstants.EMAIL_CHANGE_CODE_PREFIX + email;
+        String redisCacheKey = StrUtil.format(RedisConstants.Captcha.EMAIL_CODE, email);
         redisTemplate.opsForValue().set(redisCacheKey, code, 5, TimeUnit.MINUTES);
     }
 
@@ -507,7 +532,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
         // 获取缓存的验证码
         String email = form.getEmail();
-        String redisCacheKey = RedisConstants.EMAIL_CHANGE_CODE_PREFIX + email;
+        String redisCacheKey = RedisConstants.Captcha.EMAIL_CODE + email;
         String cachedVerifyCode = redisTemplate.opsForValue().get(redisCacheKey);
 
         if (StrUtil.isBlank(cachedVerifyCode)) {
